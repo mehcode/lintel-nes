@@ -1,0 +1,10 @@
+[package]
+name = "lintel-nes"
+version = "0.0.0"
+authors = [
+  "Ryan Leckey <leckey.ryan@gmail.com>"
+]
+
+[dependencies]
+bitflags = "0.7"
+strfmt = "0.1.x"
