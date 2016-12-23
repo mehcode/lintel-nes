@@ -1,5 +1,5 @@
 [package]
-name = "lintel-nes"
+name = "lintel_nes"
 version = "0.0.0"
 authors = [
   "Ryan Leckey <leckey.ryan@gmail.com>"
@@ -8,3 +8,5 @@ authors = [
 [dependencies]
 bitflags = "0.7"
 strfmt = "0.1.x"
+log = "0.3.x"
+env_logger = "0.3.x"
