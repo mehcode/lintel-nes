@@ -23,6 +23,9 @@ impl Bus {
             // Internal RAM (2KiB; mirrored 3 times)
             0x0000...0x1FFF => self.ram[(address & 0x07FF) as usize],
 
+            // [NROM] PRG-RAM
+            0x6000...0x7FFF => self.cartridge.prg_ram[(address - 0x6000) as usize],
+
             // [NROM] PRG-ROM #1
             0x8000...0xBFFF => self.cartridge.prg_rom[(address - 0x8000) as usize],
 
@@ -48,6 +51,11 @@ impl Bus {
             // Internal RAM (2KiB; mirrored 3 times)
             0x0000...0x1FFF => {
                 self.ram[(address & 0x07FF) as usize] = value;
+            }
+
+            // [NROM] PRG-RAM
+            0x6000...0x7FFF => {
+                self.cartridge.prg_ram[(address - 0x6000) as usize] = value;
             }
 
             // [NROM] PRG-ROM #1
