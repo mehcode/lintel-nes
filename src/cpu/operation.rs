@@ -61,9 +61,6 @@ pub struct Operation {
 
     // Number of bytes (incl. opcode)
     pub size: u8,
-
-    // Addressing mode
-    pub addr_mode: AddressingMode,
 }
 
 impl Operation {
@@ -72,20 +69,17 @@ impl Operation {
             handle: None,
             disassembly: "",
             size: 0,
-            addr_mode: AddressingMode::Implied,
         }
     }
 
     pub fn new(handle: fn(&mut Context, &mut Bus) -> (),
                disassembly: &'static str,
-               size: u8,
-               addr_mode: AddressingMode)
+               size: u8)
                -> Self {
         Operation {
             handle: Some(handle),
             disassembly: disassembly,
             size: size,
-            addr_mode: addr_mode,
         }
     }
 
@@ -94,13 +88,18 @@ impl Operation {
         let n1 = b.read(c.pc + 1) as i64;
         strfmt::strfmt_map(self.disassembly,
                            &|mut fmt: strfmt::Formatter| {
-            // TODO(rust): This library seems to want me to use unwrap here which smells
-            if fmt.key == "0" {
-                fmt.write_str(&format!("{:02X}", n0)).unwrap()
-            } else if fmt.key == "1" {
-                fmt.write_str(&format!("{:02X}", n1)).unwrap()
+            if let Some(ty) = fmt.ty() {
+                if ty == 'X' && fmt.key == "0" {
+                    fmt.write_str(&format!("{:02X}", n0)).unwrap()
+                } else if ty == 'X' && fmt.key == "1" {
+                    fmt.write_str(&format!("{:02X}", n1)).unwrap()
+                } else {
+                    panic!(format!("unknown format: {:?}", fmt))
+                }
+            } else if fmt.key == "0" {
+                fmt.write_str(&format!("{}", n0 as i8)).unwrap()
             } else {
-                panic!(format!("unknown format key: {}", fmt.key))
+                panic!(format!("unknown format: {:?}", fmt))
             }
 
             Ok(())

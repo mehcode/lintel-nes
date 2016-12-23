@@ -1,7 +1,8 @@
 use ::bus::Bus;
 
-mod op;
+#[macro_use]
 mod om;
+mod op;
 mod operation;
 mod table;
 
@@ -66,11 +67,31 @@ impl Context {
         // Get /RESET address
         // TODO: Should have helper methods in om to get vectors/16-bit data
         self.pc = b.read(0xFFFC) as u16 | ((b.read(0xFFFD) as u16) << 8);
+        // self.pc = 0xC000;
     }
 
-    fn step(&mut self, _: &mut Bus) {
+    fn step(&mut self, b: &mut Bus) {
         // TODO: b.step();
         self.total_cycles += 1;
+        if self.total_cycles % 10000000 == 0 {
+            self.print_test_output(b);
+        }
+    }
+
+    fn print_test_output(&mut self, b: &mut Bus) {
+        println!("-------- [instr-test v4] -----------");
+        let mut i = 0;
+        loop {
+            let c = b.read(0x6004 + i);
+            if c == 0x00 {
+                break;
+            }
+
+            print!("{}", c as char);
+
+            i += 1;
+        }
+        println!("\n------------------------------------");
     }
 }
 
@@ -97,7 +118,7 @@ impl CPU {
         let op = &self.table[opcode];
         if let Some(handle) = op.handle {
             // Trace: Operation
-            println!("{:>10}: {:<25} PC: ${:04X} A: ${:02X} X: ${:02X} Y: ${:02X} S: ${:02X} P: ${:02X}",
+            trace!("{:>10}: {:<25} PC: ${:04X} A: ${:02X} X: ${:02X} Y: ${:02X} S: ${:02X} P: ${:02X}",
                      self.ctx.total_cycles,
                      op.format(&self.ctx, b).unwrap(),
                      _pc,
@@ -108,9 +129,7 @@ impl CPU {
                      self.ctx.p.bits);
 
             // The 65xx _always_ reads at least 2 bytes per instructions.
-            // For Implied and Accumulator addressing modes, read PC from memory and
-            // discard the value.
-            if (op.addr_mode == om::Implied) || (op.addr_mode == om::Accumulator) {
+            if op.size <= 1 {
                 self.ctx.step(b);
                 b.read(self.ctx.pc);
             }
@@ -118,6 +137,7 @@ impl CPU {
             // Execute: Operation
             (handle)(&mut self.ctx, b);
         } else {
+            self.ctx.print_test_output(b);
             panic!(format!("unknown opcode ${:02X} at ${:04X}", opcode, _pc))
         }
     }
