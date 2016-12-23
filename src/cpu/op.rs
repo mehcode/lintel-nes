@@ -785,6 +785,7 @@ pub fn _40(c: &mut Context, b: &mut Bus) {
     c.step(b);
     c.p = cpu::Flags::from_bits_truncate(b.read(0x100 + c.s as u16));
     c.p.remove(cpu::BREAK);
+    c.s = c.s.wrapping_add(1);
 
     // Pull PCL from stack; increment S
     c.step(b);
