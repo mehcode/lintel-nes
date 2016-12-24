@@ -5,7 +5,7 @@ use super::Context;
 use super::om;
 
 // No Operation
-// ============
+// ================================================================================================
 
 // NOP [-------] {2}
 pub fn _EA(_: &mut Context, _: &mut Bus) {
@@ -13,7 +13,7 @@ pub fn _EA(_: &mut Context, _: &mut Bus) {
 }
 
 // Set Flag
-// ========
+// ================================================================================================
 
 // SEC [1------] {2}
 pub fn _38(c: &mut Context, _: &mut Bus) {
@@ -31,7 +31,7 @@ pub fn _F8(c: &mut Context, _: &mut Bus) {
 }
 
 // Clear Flag
-// ==========
+// ================================================================================================
 
 // CLC [0------] {2}
 pub fn _18(c: &mut Context, _: &mut Bus) {
@@ -54,7 +54,7 @@ pub fn _D8(c: &mut Context, _: &mut Bus) {
 }
 
 // Transfer
-// ========
+// ================================================================================================
 
 // TAX [-z----n] {2}
 pub fn _AA(c: &mut Context, _: &mut Bus) {
@@ -838,4 +838,41 @@ pub fn _50(c: &mut Context, b: &mut Bus) {
 // BVS nn [-------] {2...4}
 pub fn _70(c: &mut Context, b: &mut Bus) {
     om::branch(c, b, cpu::OVERFLOW, true);
+}
+
+// Break
+// ================================================================================================
+
+// BRK
+pub fn _00(c: &mut Context, b: &mut Bus) {
+    // Increment PC (because it said so)
+    c.pc = c.pc.wrapping_add(1);
+
+    // Push PCH on stack; decrement S
+    c.step(b);
+    b.write(0x100 + c.s as u16, (c.pc >> 8) as u8);
+    c.s = c.s.wrapping_sub(1);
+
+    // Push PCL on stack; decrement S
+    c.step(b);
+    b.write(0x100 + c.s as u16, c.pc as u8);
+    c.s = c.s.wrapping_sub(1);
+
+    // Push P on stack (with BRK and UNUSED set); decrement S
+    c.step(b);
+    b.write(0x100 + c.s as u16, (c.p | cpu::BREAK).bits | 0x20);
+    c.s = c.s.wrapping_sub(1);
+
+    // Fetch PCL
+    c.step(b);
+    let l = b.read(0xFFFE);
+    c.pc = c.pc.wrapping_add(1);
+
+    // Fetch PCH
+    c.step(b);
+    let h = b.read(0xFFFF);
+    c.pc = l as u16 | ((h as u16) << 8);
+
+    // Set the IRQ Disable flag
+    c.p.insert(cpu::IRQ_DISABLE);
 }

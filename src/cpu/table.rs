@@ -276,6 +276,11 @@ impl Default for Table {
         operations[0x50] = Operation::new(op::_50, "BVC {0}", 2);
         operations[0x70] = Operation::new(op::_70, "BVS {0}", 2);
 
+        // Branch
+        // ======
+
+        operations[0x00] = Operation::new(op::_00, "BRK", 1);
+
         Table { operations: operations }
     }
 }
