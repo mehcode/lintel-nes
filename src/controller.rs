@@ -43,7 +43,7 @@ pub trait Controller {
 }
 
 
-pub fn from_cartridge(cartridge: Cartridge) -> Box<Controller> {
+pub fn from_cartridge(cartridge: &Cartridge) -> Box<Controller> {
     match cartridge.ines_mapper {
         0 => Box::new(NROM {}),
 
@@ -130,15 +130,33 @@ impl Controller for NROM {
                 address: u16,
                 ptr: &mut u8)
                 -> bool {
-        false
+        *ptr = match address {
+            // CHR-ROM
+            0x0000...0x1FFF => cartridge.chr_rom[address as usize],
+
+            // Internal RAM (2KiB; mirrored once)
+            0x2000...0x3FFF => ram[((address as usize) - 0x2000) & 0x1FFF],
+
+            _ => {
+                return false;
+            }
+        };
+
+        true
     }
 
-    fn ppu_write(&mut self,
-                 ram: &mut [u8],
-                 cartridge: &mut Cartridge,
-                 address: u16,
-                 value: u8)
-                 -> bool {
-        false
+    fn ppu_write(&mut self, ram: &mut [u8], _: &mut Cartridge, address: u16, value: u8) -> bool {
+        match address {
+            // Internal RAM (2KiB; mirrored once)
+            0x2000...0x3FFF => {
+                ram[((address as usize) - 0x2000) & 0x1FFF] = value;
+            }
+
+            _ => {
+                return false;
+            }
+        }
+
+        true
     }
 }

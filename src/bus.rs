@@ -30,10 +30,44 @@ impl Bus {
     }
 
     pub fn read(&mut self, address: u16) -> u8 {
-        cpu::Controller::read(&mut self.mmu, address)
+        let mut value: u8 = 0xFF;
+        if cpu::Controller::try_read(&mut self.mmu, address, &mut value) {
+            return value;
+        }
+
+        match address {
+            // PPU Registers
+            0x2000...0x2007 => self.ppu.read(&mut self.mmu, address),
+
+            // Unimplemented I/O ports
+            0x4000...0x401F => 0xFF,
+
+            _ => {
+                warn!("unhandled read at ${:04X}", address);
+
+                0xFF
+            }
+        }
     }
 
     pub fn write(&mut self, address: u16, value: u8) {
-        cpu::Controller::write(&mut self.mmu, address, value);
+        if cpu::Controller::try_write(&mut self.mmu, address, value) {
+            return;
+        }
+
+        match address {
+            // PPU Registers
+            0x2000...0x2007 => self.ppu.write(&mut self.mmu, address, value),
+
+            // Unimplemented I/O ports
+            0x4000...0x401F => {}
+
+            _ => {
+                warn!("unhandled write at ${:04X} with ${:02X} ({})",
+                      address,
+                      value,
+                      value);
+            }
+        }
     }
 }

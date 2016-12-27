@@ -8,10 +8,29 @@ macro_rules! make_controller {() => {
     pub trait Controller {
         /// The controller _attempts_ to read address. If unmapped, return false. If mapped,
         /// insert value at `ptr` and return true.
-        fn read(&mut self, address: u16) -> u8;
+        fn try_read(&mut self, address: u16, ptr: &mut u8) -> bool;
+
+        fn read(&mut self, address: u16) -> u8 {
+            let mut value: u8 = 0xFF;
+            if self.try_read(address, &mut value) {
+                return value;
+            }
+
+            warn!("unhandled read at ${:04X}", address);
+
+            value
+        }
 
         /// The controller _attempts_ to write address. If unmapped, return false; otherwise, true.
-        fn write(&mut self, address: u16, value: u8);
+        fn try_write(&mut self, address: u16, value: u8) -> bool;
+
+        fn write(&mut self, address: u16, value: u8) {
+            if self.try_write(address, value) {
+                return;
+            }
+
+            warn!("unhandled write at ${:04X} with ${:02X} ({})", address, value, value);
+        }
     }
 };}
 
@@ -33,7 +52,8 @@ pub struct MMU {
 
 impl MMU {
     pub fn take_cartridge(&mut self, cartridge: Cartridge) {
-        self.controller = Some(controller::from_cartridge(cartridge));
+        self.cartridge = cartridge;
+        self.controller = Some(controller::from_cartridge(&self.cartridge));
     }
 
     pub fn reset(&mut self) {
@@ -53,43 +73,45 @@ impl MMU {
 }
 
 impl cpu::Controller for MMU {
-    fn read(&mut self, address: u16) -> u8 {
-        let mut value: u8 = 0xFF;
+    fn try_read(&mut self, address: u16, ptr: &mut u8) -> bool {
         if let Some(ref mut controller) = self.controller {
-            if controller.cpu_read(&mut self.cpu_ram, &mut self.cartridge, address, &mut value) {
-                return value;
+            if controller.cpu_read(&mut self.cpu_ram, &mut self.cartridge, address, ptr) {
+                return true;
             }
         }
 
-        value
+        false
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    fn try_write(&mut self, address: u16, value: u8) -> bool {
         if let Some(ref mut controller) = self.controller {
             if controller.cpu_write(&mut self.cpu_ram, &mut self.cartridge, address, value) {
-                return;
+                return true;
             }
         }
+
+        false
     }
 }
 
 impl ppu::Controller for MMU {
-    fn read(&mut self, address: u16) -> u8 {
-        let mut value: u8 = 0xFF;
+    fn try_read(&mut self, address: u16, ptr: &mut u8) -> bool {
         if let Some(ref mut controller) = self.controller {
-            if controller.ppu_read(&mut self.ppu_ram, &mut self.cartridge, address, &mut value) {
-                return value;
+            if controller.ppu_read(&mut self.ppu_ram, &mut self.cartridge, address, ptr) {
+                return true;
             }
         }
 
-        value
+        false
     }
 
-    fn write(&mut self, address: u16, value: u8) {
+    fn try_write(&mut self, address: u16, value: u8) -> bool {
         if let Some(ref mut controller) = self.controller {
             if controller.ppu_write(&mut self.ppu_ram, &mut self.cartridge, address, value) {
-                return;
+                return true;
             }
         }
+
+        false
     }
 }
