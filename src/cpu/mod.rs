@@ -1,10 +1,12 @@
-use ::bus::Bus;
-
 #[macro_use]
 mod om;
 mod op;
 mod operation;
 mod table;
+use bus::Bus;
+
+// Generate memory Controller trait for CPU
+make_controller!();
 
 bitflags!(
     #[derive(Default)]
@@ -71,27 +73,8 @@ impl Context {
     }
 
     fn step(&mut self, b: &mut Bus) {
-        // TODO: b.step();
+        b.step();
         self.total_cycles += 1;
-        if self.total_cycles % 10000000 == 0 {
-            self.print_test_output(b);
-        }
-    }
-
-    fn print_test_output(&mut self, b: &mut Bus) {
-        println!("-------- [instr-test v4] -----------");
-        let mut i = 0;
-        loop {
-            let c = b.read(0x6004 + i);
-            if c == 0x00 {
-                break;
-            }
-
-            print!("{}", c as char);
-
-            i += 1;
-        }
-        println!("\n------------------------------------");
     }
 }
 
@@ -137,7 +120,6 @@ impl CPU {
             // Execute: Operation
             (handle)(&mut self.ctx, b);
         } else {
-            self.ctx.print_test_output(b);
             panic!(format!("unknown opcode ${:02X} at ${:04X}", opcode, _pc))
         }
     }

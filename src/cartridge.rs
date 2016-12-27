@@ -12,6 +12,9 @@ pub struct Cartridge {
 
     /// Character ROM (CHR-ROM)
     pub chr_rom: Vec<u8>,
+
+    /// iNES Mapper Number
+    pub ines_mapper: u16,
 }
 
 impl Cartridge {
@@ -49,11 +52,7 @@ impl Cartridge {
         }
 
         // Build iNes 1.0 mapper number
-        // TODO: Flesh this out
-        let mapper = (header[6] >> 4) | (header[7] & 0xF0);
-        if mapper != 0 {
-            // Only NROM (0) supported right now
-            panic!("unknown/unsupported mapper: {}", mapper);
-        }
+        // TODO: Flesh this out more
+        self.ines_mapper = ((header[6] >> 4) | (header[7] & 0xF0)) as u16;
     }
 }

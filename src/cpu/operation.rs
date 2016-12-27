@@ -1,16 +1,10 @@
 use strfmt;
 use std::fmt::Write;
 use bus::Bus;
-use cpu::Context;
+use super::Context;
 
 #[derive(Debug, PartialEq)]
 pub enum AddressingMode {
-    // No operand beyond instruction semantics [eg. `CLC`]
-    Implied,
-
-    // Operates directly on Accumulator (and Accumulator only) [eg. `LRS A`]
-    Accumulator,
-
     // Operates on an 8-bit constant (found immediately after the operation
     // code) [eg. `LDA #$10`]
     Immediate,
@@ -29,10 +23,6 @@ pub enum AddressingMode {
     // code [eg. `LDX $10, Y`]
     ZeroPageY,
 
-    // Operates on a *signed* 8-bit value found immediately after the operation
-    // code [eg. `BNE -6`]
-    Relative,
-
     // [...]
     Absolute,
 
@@ -41,9 +31,6 @@ pub enum AddressingMode {
 
     // [...]
     AbsoluteY,
-
-    // [...]
-    Indirect,
 
     // [...]
     IndexedIndirect,

@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
-use bus::Bus;
 use cpu;
+use bus::Bus;
 use super::Context;
 use super::om;
 

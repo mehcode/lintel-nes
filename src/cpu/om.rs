@@ -165,10 +165,6 @@ pub fn read(c: &mut Context, b: &mut Bus, mode: AddressingMode) -> u8 {
 
             address
         }
-
-        _ => {
-            panic!("unsupported addressing mode for Read operation: {:?}", mode);
-        }
     };
 
     // Read from effective address

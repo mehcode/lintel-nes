@@ -1,80 +1,39 @@
-use std::vec::Vec;
+use mmu;
+use cpu;
+use ppu;
 use cartridge;
 
 #[derive(Default)]
 pub struct Bus {
-    /// RAM (2 KiB)
-    ram: Vec<u8>,
+    /// Component: PPU
+    ppu: ppu::PPU,
 
-    /// Component: Cartridge
-    pub cartridge: cartridge::Cartridge,
+    /// Component: Memory Controller
+    mmu: mmu::MMU,
 }
 
 impl Bus {
+    pub fn take_cartridge(&mut self, cartridge: cartridge::Cartridge) {
+        self.mmu.take_cartridge(cartridge);
+    }
+
     pub fn reset(&mut self) {
-        self.ram.clear();
-        self.ram.resize(2 * 1024, 0);
+        self.ppu.reset();
+        self.mmu.reset();
     }
 
-    /// Memory: Read
-    pub fn read(&self, address: u16) -> u8 {
-        // TODO: Mappers are taking 0 consideration right now
-        match address {
-            // Internal RAM (2KiB; mirrored 3 times)
-            0x0000...0x1FFF => self.ram[(address & 0x07FF) as usize],
-
-            // [NROM] PRG-RAM
-            0x6000...0x7FFF => self.cartridge.prg_ram[(address - 0x6000) as usize],
-
-            // [NROM] PRG-ROM #1
-            0x8000...0xBFFF => self.cartridge.prg_rom[(address - 0x8000) as usize],
-
-            // [NROM] PRG-ROM #2
-            0xC000...0xFFFF => {
-                if self.cartridge.prg_rom.len() <= 0x4000 {
-                    // 16-KiB PRG-ROM; mirror of 0x8000...0xBFFF
-                    self.cartridge.prg_rom[(address - 0xC000) as usize]
-                } else {
-                    // 32-KiB PRG-ROM
-                    self.cartridge.prg_rom[(address - 0x8000) as usize]
-                }
-            }
-
-            _ => 0xFF,
-        }
+    pub fn step(&mut self) {
+        // 3 PPU Steps ("dots") to 1 CPU Step ("cycle")
+        self.ppu.step(&mut self.mmu);
+        self.ppu.step(&mut self.mmu);
+        self.ppu.step(&mut self.mmu);
     }
 
-    /// Memory: Write
+    pub fn read(&mut self, address: u16) -> u8 {
+        cpu::Controller::read(&mut self.mmu, address)
+    }
+
     pub fn write(&mut self, address: u16, value: u8) {
-        // TODO: Mappers are taking 0 consideration right now
-        match address {
-            // Internal RAM (2KiB; mirrored 3 times)
-            0x0000...0x1FFF => {
-                self.ram[(address & 0x07FF) as usize] = value;
-            }
-
-            // [NROM] PRG-RAM
-            0x6000...0x7FFF => {
-                self.cartridge.prg_ram[(address - 0x6000) as usize] = value;
-            }
-
-            // [NROM] PRG-ROM #1
-            0x8000...0xBFFF => {
-                self.cartridge.prg_rom[(address - 0x8000) as usize] = value;
-            }
-
-            // [NROM] PRG-ROM #2
-            0xC000...0xFFFF => {
-                if self.cartridge.prg_rom.len() <= 0x4000 {
-                    // 16-KiB PRG-ROM; mirror of 0x8000...0xBFFF
-                    self.cartridge.prg_rom[(address - 0xC000) as usize] = value;
-                } else {
-                    // 32-KiB PRG-ROM
-                    self.cartridge.prg_rom[(address - 0x8000) as usize] = value;
-                }
-            }
-
-            _ => {}
-        }
+        cpu::Controller::write(&mut self.mmu, address, value);
     }
 }

@@ -1,3 +1,4 @@
+#![feature(type_ascription)]
 
 #[macro_use]
 extern crate log;
@@ -8,9 +9,17 @@ extern crate bitflags;
 
 extern crate strfmt;
 
+mod controller;
+
+#[macro_use]
+mod mmu;
+
 mod bus;
 mod cpu;
+mod ppu;
+
 mod cartridge;
+
 mod machine;
 
 fn main() {

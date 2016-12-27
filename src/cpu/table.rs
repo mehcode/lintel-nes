@@ -2,7 +2,6 @@ use std::ops::Index;
 use std::vec::Vec;
 use super::op;
 use super::operation::Operation;
-use super::operation::AddressingMode::*;
 
 pub struct Table {
     // Operation table
