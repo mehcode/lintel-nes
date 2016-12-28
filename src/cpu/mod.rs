@@ -72,7 +72,7 @@ impl Context {
         // self.pc = 0xC000;
     }
 
-    fn step(&mut self, b: &mut Bus) {
+    pub fn step(&mut self, b: &mut Bus) {
         b.step();
         self.total_cycles += 1;
     }
@@ -80,7 +80,7 @@ impl Context {
 
 #[derive(Default)]
 pub struct CPU {
-    ctx: Context,
+    pub ctx: Context,
     table: table::Table,
 }
 

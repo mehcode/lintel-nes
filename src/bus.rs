@@ -6,7 +6,7 @@ use cartridge;
 #[derive(Default)]
 pub struct Bus {
     /// Component: PPU
-    ppu: ppu::PPU,
+    pub ppu: ppu::PPU,
 
     /// Component: Memory Controller
     mmu: mmu::MMU,
@@ -58,6 +58,19 @@ impl Bus {
         match address {
             // PPU Registers
             0x2000...0x2007 => self.ppu.write(&mut self.mmu, address, value),
+
+            // OAM DMA
+            0x4014 => {
+                // TODO: Time this right
+                let mut src = (value as u16) << 8;
+                let src_end = src + 0xFF;
+                while src < src_end {
+                    let r = self.read(src);
+                    self.write(0x2004, r);
+
+                    src += 1;
+                }
+            }
 
             // Unimplemented I/O ports
             0x4000...0x401F => {}

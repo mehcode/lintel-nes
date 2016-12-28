@@ -866,7 +866,6 @@ pub fn _00(c: &mut Context, b: &mut Bus) {
     // Fetch PCL
     c.step(b);
     let l = b.read(0xFFFE);
-    c.pc = c.pc.wrapping_add(1);
 
     // Fetch PCH
     c.step(b);

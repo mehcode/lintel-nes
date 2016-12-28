@@ -27,6 +27,7 @@ pub trait Controller {
     /// insert value at `ptr` and return true.
     fn ppu_read(&mut self,
                 ram: &mut [u8],
+                palette: &mut [u8],
                 cartridge: &mut Cartridge,
                 address: u16,
                 ptr: &mut u8)
@@ -36,6 +37,7 @@ pub trait Controller {
     /// otherwise, true.
     fn ppu_write(&mut self,
                  ram: &mut [u8],
+                 palette: &mut [u8],
                  cartridge: &mut Cartridge,
                  address: u16,
                  value: u8)
@@ -126,6 +128,7 @@ impl Controller for NROM {
 
     fn ppu_read(&mut self,
                 ram: &mut [u8],
+                palette: &mut [u8],
                 cartridge: &mut Cartridge,
                 address: u16,
                 ptr: &mut u8)
@@ -135,7 +138,11 @@ impl Controller for NROM {
             0x0000...0x1FFF => cartridge.chr_rom[address as usize],
 
             // Internal RAM (2KiB; mirrored once)
-            0x2000...0x3FFF => ram[((address as usize) - 0x2000) & 0x1FFF],
+            // TODO: Limit size access
+            0x2000...0x3EFF => ram[((address as usize) - 0x2000) & 0x0FFF],
+
+            // Palette RAM
+            0x3F00...0x3F1F => palette[((address as usize) - 0x3F00) & 0x1F],
 
             _ => {
                 return false;
@@ -145,11 +152,23 @@ impl Controller for NROM {
         true
     }
 
-    fn ppu_write(&mut self, ram: &mut [u8], _: &mut Cartridge, address: u16, value: u8) -> bool {
+    fn ppu_write(&mut self,
+                 ram: &mut [u8],
+                 palette: &mut [u8],
+                 _: &mut Cartridge,
+                 address: u16,
+                 value: u8)
+                 -> bool {
         match address {
             // Internal RAM (2KiB; mirrored once)
-            0x2000...0x3FFF => {
-                ram[((address as usize) - 0x2000) & 0x1FFF] = value;
+            // TODO: Limit size access
+            0x2000...0x3EFF => {
+                ram[((address as usize) - 0x2000) & 0x0FFF] = value;
+            }
+
+            // Palette RAM
+            0x3F00...0x3F1F => {
+                palette[((address as usize) - 0x3F00) & 0x1F] = value;
             }
 
             _ => {

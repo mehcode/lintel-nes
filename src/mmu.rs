@@ -48,6 +48,9 @@ pub struct MMU {
 
     // [PPU] Internal RAM ~ 2 KiB
     ppu_ram: Vec<u8>,
+
+    // [PPU] Palette ~ 32 Bytes
+    ppu_palette: Vec<u8>,
 }
 
 impl MMU {
@@ -60,8 +63,10 @@ impl MMU {
         // Reset: RAM
         self.cpu_ram.clear();
         self.ppu_ram.clear();
+        self.ppu_palette.clear();
         self.cpu_ram.resize(1024 * 2, 0);
         self.ppu_ram.resize(1024 * 2, 0);
+        self.ppu_palette.resize(32, 0);
 
         // TODO? self.cartridge.reset()
 
@@ -97,7 +102,11 @@ impl cpu::Controller for MMU {
 impl ppu::Controller for MMU {
     fn try_read(&mut self, address: u16, ptr: &mut u8) -> bool {
         if let Some(ref mut controller) = self.controller {
-            if controller.ppu_read(&mut self.ppu_ram, &mut self.cartridge, address, ptr) {
+            if controller.ppu_read(&mut self.ppu_ram,
+                                   &mut self.ppu_palette,
+                                   &mut self.cartridge,
+                                   address,
+                                   ptr) {
                 return true;
             }
         }
@@ -107,7 +116,11 @@ impl ppu::Controller for MMU {
 
     fn try_write(&mut self, address: u16, value: u8) -> bool {
         if let Some(ref mut controller) = self.controller {
-            if controller.ppu_write(&mut self.ppu_ram, &mut self.cartridge, address, value) {
+            if controller.ppu_write(&mut self.ppu_ram,
+                                    &mut self.ppu_palette,
+                                    &mut self.cartridge,
+                                    address,
+                                    value) {
                 return true;
             }
         }

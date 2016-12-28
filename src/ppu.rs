@@ -1,3 +1,5 @@
+use std::vec::Vec;
+
 // TODO: Color Emphasis
 // TODO: Sprite overflow
 // TODO: Sprite #0 Hit
@@ -9,7 +11,7 @@ make_controller!();
 #[derive(Default)]
 pub struct PPU {
     /// [PPUCTRL:7] NMI Enable
-    nmi_enable: bool,
+    pub nmi_enable: bool,
 
     /// [PPUCTRL:5] Sprite 8x16 (1) or 8x8 (0)
     sprite_16: bool,
@@ -46,7 +48,7 @@ pub struct PPU {
     latch: bool,
 
     /// In V-Blank (outwords facing flag)
-    vblank: bool,
+    pub vblank: bool,
 
     /// Current scanline being rendered (261 = -1)
     line: u16,
@@ -57,6 +59,12 @@ pub struct PPU {
     /// Dot counter for the current scanline
     dots: u16,
 
+    /// Current OAM address
+    pub oam_address: u8,
+
+    /// Object Attribute Memory (OAM) ~ 256 bytes
+    oam: Vec<u8>,
+
     /// Current V-RAM address (15 bits)
     v: u16,
 
@@ -65,6 +73,15 @@ pub struct PPU {
 
     /// Temporary V-RAM address (15 bits); more directly controlled by PPU registers
     t: u16,
+
+    /// Current (in-use) Nametable Byte (tile index)
+    nt: u8,
+
+    /// Current (in-use) Attribute Byte
+    at: u8,
+
+    /// Next Attribute Byte
+    at_next: u8,
 }
 
 impl PPU {
@@ -80,23 +97,34 @@ impl PPU {
 
         self.latch = false;
 
+        self.oam.clear();
+        self.oam.resize(256, 0);
+        self.oam_address = 0;
+
         self.line = 261;  // -1 (pre-render scanline)
         self.frame_odd = false;
         self.dots = 0;
         self.v = 0;
         self.t = 0;
         self.x = 0;
+        self.nt = 0;
+        self.at = 0;
+        self.at_next = 0;
     }
 
     pub fn step(&mut self, c: &mut Controller) {
         if self.line == 261 {
             // Pre-render (-1 / 261)
             if self.dots == 1 {
-                // TODO: Clear: V-Blank
+                // Clear: V-Blank
+                self.vblank = false;
+
                 // TODO: Clear: Sprite Overflow
                 // TODO: Clear: Sprite 0 Hit
             } else if self.dots >= 280 && self.dots <= 304 {
-                // TODO: Initilize: Vy to Ty
+                // Initilize: Vy to Ty
+                self.v &= !0x7BE0;
+                self.v |= self.t & 0x7BE0;
             }
         } else if self.line >= 240 && self.line <= 260 {
             // In V-Blank; do mostly nothing
@@ -112,15 +140,38 @@ impl PPU {
         if (self.line == 261 || self.line <= 239) && self.dots <= 257 && self.dots > 0 {
             // Visible (0 ... 239) and Pre-render (-1 / 261)
 
-            // Fetch: Nametable (NT) at dot 1,9,17,...,249
+            // TODO: Get pixel value at current dot
 
-            // TODO: Fetch: Attribute (AT) at dot 3,11,19,...,251
-            // TODO: Fetch: Background Tile Low at dot 5,13,21,...,253
-            // TODO: Fetch: Background Tile High at dot 7,15,23,...,255
-
-            // TODO: Increment: Vx at dots 8,16,...,64,...,248
-            // TODO: Increment: Vy at dot 256
-            // TODO: Initilize: Vx to Tx at dot 257
+            // Prepare next tile for rendering
+            let rem = self.dots % 8;
+            let nt_address = self.v & 0xFFF;
+            if rem == 1 {
+                // Fetch: Nametable (NT) at dot 1,9,17,...,249
+                self.nt = c.read(nt_address);
+            } else if rem == 3 {
+                // Fetch: Attribute (AT) at dot 3,11,19,...,251
+                let at_base = (((nt_address / 0x400) + 1) * 0x400) - 0x40;
+                let at_address = at_base + ((nt_address & 0x3FF) / 4);
+                self.at_next = c.read(at_address);
+            } else if rem == 5 {
+                // TODO: Fetch: Background Tile Low at dot 5,13,21,...,253
+            } else if rem == 7 {
+                // TODO: Fetch: Background Tile High at dot 7,15,23,...,255
+            } else if rem == 0 && self.dots != 0 {
+                // Increment: Vx at dots 8,16,...,64,...,248
+                if self.v & 0x1F == 31 {
+                    self.v &= !0x001F;    // coarse X = 0
+                    self.v ^= 0x0400;     // switch horizontal nametable
+                } else {
+                    self.v += 1;          // increment coarse X
+                }
+            } else if self.dots == 256 {
+                // TODO: Increment: Vy at dot 256
+            } else if self.dots == 257 {
+                // Initilize: Vx to Tx at dot 257
+                self.v &= !0x401F;
+                self.v |= self.t & 0x401F;
+            }
         }
 
         // Increment dot counter
@@ -147,7 +198,7 @@ impl PPU {
         }
     }
 
-    pub fn read(&mut self, c: &mut Controller, address: u16) -> u8 {
+    pub fn read(&mut self, _: &mut Controller, address: u16) -> u8 {
         match address {
             // TODO: Least significant bits previously written into a PPU register (0..3)
             0x2002 => {
@@ -192,6 +243,17 @@ impl PPU {
                 self.monochrome = value & 0x01 != 0;
             }
 
+            // [OAMADDR]: OAM address port
+            0x2003 => {
+                self.oam_address = value;
+            }
+
+            // [OAMDATA]: OAM data port
+            0x2004 => {
+                self.oam[self.oam_address as usize] = value;
+                self.oam_address = self.oam_address.wrapping_add(1);
+            }
+
             0x2005 => {
                 if self.latch {
                     self.t &= !0x73E0;
@@ -222,6 +284,7 @@ impl PPU {
 
             0x2007 => {
                 // Write VRAM
+                info!("vram: write: ${:04X}: ${:02X}", self.v, value);
                 c.write(self.v, value);
 
                 // Increment "Current" VRAM Address
