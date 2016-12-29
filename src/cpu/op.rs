@@ -674,6 +674,7 @@ pub fn _68(c: &mut Context, b: &mut Bus) {
     c.s = c.s.wrapping_add(1);
 
     // Pull register from stack
+    c.step(b);
     c.a = b.read(0x100 + c.s as u16);
 
     c.p.set(cpu::ZERO, c.a == 0);
@@ -687,6 +688,7 @@ pub fn _28(c: &mut Context, b: &mut Bus) {
     c.s = c.s.wrapping_add(1);
 
     // Pull register from stack
+    c.step(b);
     c.p = cpu::Flags::from_bits_truncate(b.read(0x100 + c.s as u16));
     c.p.remove(cpu::BREAK);
 }

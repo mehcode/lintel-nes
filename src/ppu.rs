@@ -8,8 +8,79 @@ use std::vec::Vec;
 // Generate memory Controller trait for PPU
 make_controller!();
 
+pub const WIDTH: usize = 256;
+pub const HEIGHT: usize = 240;
+
+const PALETTE: [(u8, u8, u8); 0x40] = [(0x65, 0x65, 0x65),
+                                       (0x00, 0x12, 0x7D),
+                                       (0x18, 0x00, 0x8E),
+                                       (0x36, 0x00, 0x82),
+                                       (0x56, 0x00, 0x5D),
+                                       (0x5A, 0x00, 0x18),
+                                       (0x4F, 0x05, 0x00),
+                                       (0x38, 0x19, 0x00),
+                                       (0x1D, 0x31, 0x00),
+                                       (0x00, 0x3D, 0x00),
+                                       (0x00, 0x41, 0x00),
+                                       (0x00, 0x3B, 0x17),
+                                       (0x00, 0x2E, 0x55),
+                                       (0x00, 0x00, 0x00),
+                                       (0x00, 0x00, 0x00),
+                                       (0x00, 0x00, 0x00),
+                                       (0xAF, 0xAF, 0xAF),
+                                       (0x19, 0x4E, 0xC8),
+                                       (0x47, 0x2F, 0xE3),
+                                       (0x6B, 0x1F, 0xD7),
+                                       (0x93, 0x1B, 0xAE),
+                                       (0x9E, 0x1A, 0x5E),
+                                       (0x97, 0x32, 0x00),
+                                       (0x7B, 0x4B, 0x00),
+                                       (0x5B, 0x67, 0x00),
+                                       (0x26, 0x7A, 0x00),
+                                       (0x00, 0x82, 0x00),
+                                       (0x00, 0x7A, 0x3E),
+                                       (0x00, 0x6E, 0x8A),
+                                       (0x00, 0x00, 0x00),
+                                       (0x00, 0x00, 0x00),
+                                       (0x00, 0x00, 0x00),
+                                       (0xFF, 0xFF, 0xFF),
+                                       (0x64, 0xA9, 0xFF),
+                                       (0x8E, 0x89, 0xFF),
+                                       (0xB6, 0x76, 0xFF),
+                                       (0xE0, 0x6F, 0xFF),
+                                       (0xEF, 0x6C, 0xC4),
+                                       (0xF0, 0x80, 0x6A),
+                                       (0xD8, 0x98, 0x2C),
+                                       (0xB9, 0xB4, 0x0A),
+                                       (0x83, 0xCB, 0x0C),
+                                       (0x5B, 0xD6, 0x3F),
+                                       (0x4A, 0xD1, 0x7E),
+                                       (0x4D, 0xC7, 0xCB),
+                                       (0x4C, 0x4C, 0x4C),
+                                       (0x00, 0x00, 0x00),
+                                       (0x00, 0x00, 0x00),
+                                       (0xFF, 0xFF, 0xFF),
+                                       (0xC7, 0xE5, 0xFF),
+                                       (0xD9, 0xD9, 0xFF),
+                                       (0xE9, 0xD1, 0xFF),
+                                       (0xF9, 0xCE, 0xFF),
+                                       (0xFF, 0xCC, 0xF1),
+                                       (0xFF, 0xD4, 0xCB),
+                                       (0xF8, 0xDF, 0xB1),
+                                       (0xED, 0xEA, 0xA4),
+                                       (0xD6, 0xF4, 0xA4),
+                                       (0xC5, 0xF8, 0xB8),
+                                       (0xBE, 0xF6, 0xD3),
+                                       (0xBF, 0xF1, 0xF1),
+                                       (0xB9, 0xB9, 0xB9),
+                                       (0x00, 0x00, 0x00),
+                                       (0x00, 0x00, 0x00)];
+
 #[derive(Default)]
 pub struct PPU {
+    /// FrameBuffer
+    pub framebuffer: Vec<u8>,
+
     /// [PPUCTRL:7] NMI Enable
     pub nmi_enable: bool,
 
@@ -82,10 +153,21 @@ pub struct PPU {
 
     /// Next Attribute Byte
     at_next: u8,
+
+    /// Current (in-use) Tile
+    tile_lo: u8,
+    tile_hi: u8,
+
+    /// Next Tile
+    tile_next_lo: u8,
+    tile_next_hi: u8,
 }
 
 impl PPU {
     pub fn reset(&mut self) {
+        self.framebuffer.clear();
+        self.framebuffer.resize(WIDTH * HEIGHT * 4, 0);
+
         self.background_pattern_table_select = false;
         self.base_nametable_address = 0;
         self.sprite_16 = false;
@@ -110,9 +192,169 @@ impl PPU {
         self.nt = 0;
         self.at = 0;
         self.at_next = 0;
+        self.tile_next_hi = 0;
+        self.tile_next_lo = 0;
+        self.tile_hi = 0;
+        self.tile_lo = 0;
     }
 
     pub fn step(&mut self, c: &mut Controller) {
+        if (self.line == 261 || self.line <= 239) && self.dots <= 257 && self.dots > 0 {
+            // Visible (0 ... 239) and Pre-render (-1 / 261)
+
+            // Get pixel value at current dot
+            if self.dots < 257 && self.line < 240 {
+                if self.background_enable {
+                    let palette_i = ((self.tile_lo >> 7) | ((self.tile_hi >> 7) << 1)) | self.at;
+                    let palette_c = c.read(0x3F00 + palette_i as u16);
+                    let (r, g, b) = PALETTE[palette_c as usize];
+
+                    // if x < 16 && self.line < 16 {
+                    //     // This should be all black!
+                    //     warn!("[dots: {}, line: {}] palette_i: ${:02X} palette_c: ${:02X}",
+                    //           self.dots,
+                    //           self.line,
+                    //           palette_i,
+                    //           palette_c);
+                    // }
+
+                    let fb_offset = (self.line as usize * WIDTH + (self.dots as usize - 1)) * 4;
+                    self.framebuffer[fb_offset] = b;
+                    self.framebuffer[fb_offset + 1] = g;
+                    self.framebuffer[fb_offset + 2] = r;
+                    self.framebuffer[fb_offset + 3] = 0xFF;
+
+                    // Shift tile and attribute byte
+                    self.tile_hi <<= 1;
+                    self.tile_lo <<= 1;
+                } else {
+                    let fb_offset = (self.line as usize * WIDTH + (self.dots as usize - 1)) * 4;
+
+                    self.framebuffer[fb_offset] = 0;
+                    self.framebuffer[fb_offset + 1] = 0;
+                    self.framebuffer[fb_offset + 2] = 0;
+                    self.framebuffer[fb_offset + 3] = 0xFF;
+                }
+            }
+
+            // Prepare next tile for rendering
+            if self.background_enable {
+                let rem = self.dots % 8;
+                let nt_address = (self.v & 0xFFF) | 0x2000;
+                let tile_base = if self.background_pattern_table_select {
+                    0x1000
+                } else {
+                    0x0000
+                };
+
+                if rem == 1 {
+                    // Fetch: Nametable (NT) at dot 1,9,17,...,249
+                    self.nt = c.read(nt_address);
+                    // if self.line < 8 {
+                    // warn!("Nametable ({}:{}): ${:04X} -> ${:02X}",
+                    //       self.line,
+                    //       self.dots,
+                    //       nt_address,
+                    //       self.nt);
+                    // }
+                }
+
+                if rem == 3 {
+                    // Fetch: Attribute (AT) at dot 3,11,19,...,251
+                    // TODO: Understand
+                    let at_address = 0x23C0 | (self.v & 0x0C00) | ((self.v >> 4) & 0x38) |
+                                     ((self.v >> 2) & 0x07);
+
+                    let shift = ((self.v >> 4) & 4) | (self.v & 2);
+                    self.at_next = ((c.read(at_address) >> shift) & 3) << 2;
+                }
+
+                if rem == 5 {
+                    // Fetch: Background Tile Low at dot 5,13,21,...,253
+                    let tile_address = ((self.v >> 12) & 0x7) | tile_base | ((self.nt as u16) << 4);
+                    self.tile_next_lo = c.read(tile_address);
+                    // if self.line < 8 {
+                    //     warn!("Tile Lo ({}:{}): [tile: {}, fine y: {}] ${:04X} -> ${:02X}",
+                    //           self.line,
+                    //           self.dots,
+                    //           self.nt,
+                    //           ((self.v >> 12) & 0x7),
+                    //           tile_address,
+                    //           self.tile_next_lo);
+                    // }
+                }
+
+                if rem == 7 {
+                    // Fetch: Background Tile High at dot 7,15,23,...,255
+                    let tile_address = ((self.v >> 12) & 0x7) | 0x8 | tile_base |
+                                       ((self.nt as u16) << 4);
+                    self.tile_next_hi = c.read(tile_address);
+                    // warn!("Tile ({}) Hi: ${:04X} -> ${:02X}",
+                    //       self.nt,
+                    //       tile_address,
+                    //       self.tile_next_hi);
+                }
+
+                if rem == 0 && self.dots != 0 && self.dots <= 248 {
+                    // Reload shifts
+                    // info!("inc hori(v) [ dots: {} / line: {} ]", self.dots, self.line);
+                    self.tile_hi = self.tile_next_hi;
+                    self.tile_lo = self.tile_next_lo;
+                    self.at = self.at_next;
+
+                    // Increment: Vx at dots 8,16,...,64,...,248
+                    // TODO: Understand this
+                    if self.v & 0x1F == 31 {
+                        self.v &= 0xFFE0;     // coarse X = 0
+                        self.v ^= 0x0400;     // switch horizontal nametable
+                    } else {
+                        self.v += 1;          // increment coarse X
+                    }
+                }
+
+                if self.dots == 256 {
+                    // Increment: Vy at dot 256
+                    // TODO: Understand this
+
+                    if self.v & 0x7000 != 0x7000 {
+                        // Increment "fine Y"
+                        self.v += 0x1000;
+                    } else {
+                        // Set "fine Y" to 0
+                        self.v &= 0x8FFF;
+
+                        // Let y = "coarse Y"
+                        let mut y = (self.v & 0x3E0) >> 5;
+                        if y == 29 {
+                            // Set "coarse Y" to 0
+                            y = 0;
+                            // Switch vertical nametable
+                            self.v ^= 0x0800;
+                        } else if y == 31 {
+                            // Set "coarse Y" to 0; don't switch nametable
+                            y = 0;
+                        } else {
+                            // Increment "coarse Y"
+                            y += 1;
+                        }
+
+                        // Put "coarse Y" back into v
+                        self.v = (self.v & 0xFC1F) | (y << 5);
+                    }
+                }
+
+                if self.dots == 257 {
+                    // info!("hori(v) = hori(t) [ dots: {} / line: {} ]",
+                    //       self.dots,
+                    //       self.line);
+                    // Initilize: Vx to Tx at dot 257
+                    // TODO: Understand this
+                    self.v &= !0x41F;
+                    self.v |= self.t & 0x41F;
+                }
+            }
+        }
+
         if self.line == 261 {
             // Pre-render (-1 / 261)
             if self.dots == 1 {
@@ -121,12 +363,20 @@ impl PPU {
 
                 // TODO: Clear: Sprite Overflow
                 // TODO: Clear: Sprite 0 Hit
-            } else if self.dots >= 280 && self.dots <= 304 {
+            }
+
+            if self.dots >= 280 && self.dots <= 304 && self.background_enable {
                 // Initilize: Vy to Ty
+                // info!("vert(v) = vert(t) [ dots: {} / line: {} ]",
+                //       self.dots,
+                //       self.line);
+
                 self.v &= !0x7BE0;
                 self.v |= self.t & 0x7BE0;
             }
-        } else if self.line >= 240 && self.line <= 260 {
+        }
+
+        if self.line >= 240 && self.line <= 260 {
             // In V-Blank; do mostly nothing
             if self.line == 241 && self.dots == 1 {
                 // Set V-Blank
@@ -134,43 +384,6 @@ impl PPU {
 
                 // TODO: Raise NMI (if enabled)
                 // TODO: Signal screen refresh (to front-end)
-            }
-        }
-
-        if (self.line == 261 || self.line <= 239) && self.dots <= 257 && self.dots > 0 {
-            // Visible (0 ... 239) and Pre-render (-1 / 261)
-
-            // TODO: Get pixel value at current dot
-
-            // Prepare next tile for rendering
-            let rem = self.dots % 8;
-            let nt_address = self.v & 0xFFF;
-            if rem == 1 {
-                // Fetch: Nametable (NT) at dot 1,9,17,...,249
-                self.nt = c.read(nt_address);
-            } else if rem == 3 {
-                // Fetch: Attribute (AT) at dot 3,11,19,...,251
-                let at_base = (((nt_address / 0x400) + 1) * 0x400) - 0x40;
-                let at_address = at_base + ((nt_address & 0x3FF) / 4);
-                self.at_next = c.read(at_address);
-            } else if rem == 5 {
-                // TODO: Fetch: Background Tile Low at dot 5,13,21,...,253
-            } else if rem == 7 {
-                // TODO: Fetch: Background Tile High at dot 7,15,23,...,255
-            } else if rem == 0 && self.dots != 0 {
-                // Increment: Vx at dots 8,16,...,64,...,248
-                if self.v & 0x1F == 31 {
-                    self.v &= !0x001F;    // coarse X = 0
-                    self.v ^= 0x0400;     // switch horizontal nametable
-                } else {
-                    self.v += 1;          // increment coarse X
-                }
-            } else if self.dots == 256 {
-                // TODO: Increment: Vy at dot 256
-            } else if self.dots == 257 {
-                // Initilize: Vx to Tx at dot 257
-                self.v &= !0x401F;
-                self.v |= self.t & 0x401F;
             }
         }
 
@@ -190,8 +403,7 @@ impl PPU {
 
                 // If this next frame is an _odd_ frame (and rendering is enabled);
                 // skip the idle dot of the first scanline
-                // TODO: IFF rendering enabled
-                if self.frame_odd {
+                if self.frame_odd && (self.background_enable || self.sprite_enable) {
                     self.dots += 1;
                 }
             }
@@ -199,9 +411,9 @@ impl PPU {
     }
 
     pub fn read(&mut self, _: &mut Controller, address: u16) -> u8 {
-        match address {
+        match address % 8 {
             // TODO: Least significant bits previously written into a PPU register (0..3)
-            0x2002 => {
+            2 => {
                 let r = (self.vblank as u8) << 7;
 
                 // Reading the status register will clear `vblank` and also
@@ -213,14 +425,15 @@ impl PPU {
             }
 
             _ => {
-                panic!("PPU::read received unmapped address: ${:04X}", address);
+                warn!("PPU::read received unmapped address: ${:04X}", address);
+                0
             }
         }
     }
 
     pub fn write(&mut self, c: &mut Controller, address: u16, value: u8) {
-        match address {
-            0x2000 => {
+        match address % 8 {
+            0 => {
                 self.nmi_enable = value & 0x80 != 0;
                 self.sprite_16 = value & 0x20 != 0;
                 self.background_pattern_table_select = value & 0x10 != 0;
@@ -230,12 +443,12 @@ impl PPU {
 
                 if value & 0x40 != 0 {
                     // Entering slave mode .. the hell?
-                    panic!("unimplemented: NES PPU slave mode (this shorts the EXT circuit on a \
+                    warn!("unimplemented: NES PPU slave mode (this shorts the EXT circuit on a \
                             real NES so what do you want us to do here)");
                 }
             }
 
-            0x2001 => {
+            1 => {
                 self.sprite_enable = value & 0x10 != 0;
                 self.background_enable = value & 0x08 != 0;
                 self.sprite_leftmost_enable = value & 0x04 != 0;
@@ -244,17 +457,17 @@ impl PPU {
             }
 
             // [OAMADDR]: OAM address port
-            0x2003 => {
+            3 => {
                 self.oam_address = value;
             }
 
             // [OAMDATA]: OAM data port
-            0x2004 => {
+            4 => {
                 self.oam[self.oam_address as usize] = value;
                 self.oam_address = self.oam_address.wrapping_add(1);
             }
 
-            0x2005 => {
+            5 => {
                 if self.latch {
                     self.t &= !0x73E0;
                 } else {
@@ -268,7 +481,7 @@ impl PPU {
                 self.latch = !self.latch;
             }
 
-            0x2006 => {
+            6 => {
                 if self.latch {
                     self.t &= !0xFF;
                     self.t |= value as u16;
@@ -282,9 +495,8 @@ impl PPU {
                 self.latch = !self.latch;
             }
 
-            0x2007 => {
+            7 => {
                 // Write VRAM
-                info!("vram: write: ${:04X}: ${:02X}", self.v, value);
                 c.write(self.v, value);
 
                 // Increment "Current" VRAM Address
@@ -301,9 +513,9 @@ impl PPU {
             }
 
             _ => {
-                panic!("PPU::write received unmapped address: ${:04X} with value ${:02X}",
-                       address,
-                       value);
+                warn!("PPU::write received unmapped address: ${:04X} with value ${:02X}",
+                      address,
+                      value);
             }
         }
     }

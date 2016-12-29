@@ -135,11 +135,32 @@ impl Controller for NROM {
                 -> bool {
         *ptr = match address {
             // CHR-ROM
-            0x0000...0x1FFF => cartridge.chr_rom[address as usize],
+            0x0000...0x1FFF => cartridge.chr[address as usize],
 
-            // Internal RAM (2KiB; mirrored once)
-            // TODO: Limit size access
-            0x2000...0x3EFF => ram[((address as usize) - 0x2000) & 0x0FFF],
+            // Internal RAM (2KiB; mirrored)
+            // TODO: Handle mirroring far better
+            0x2000...0x3EFF => {
+                let address = (address & 0xFFF) as usize;
+                if cartridge.vram_mirroring == 1 {
+                    match address {
+                        0x000...0x3FF => ram[address],
+                        0x400...0x7FF => ram[address - 0x400],
+                        0x800...0xBFF => ram[address - 0x400],
+                        0xC00...0xFFF => ram[address - 0x800],
+
+                        _ => unreachable!(),
+                    }
+                } else {
+                    match address {
+                        0x000...0x3FF => ram[address],
+                        0x400...0x7FF => ram[address],
+                        0x800...0xBFF => ram[address - 0x800],
+                        0xC00...0xFFF => ram[address - 0x800],
+
+                        _ => unreachable!(),
+                    }
+                }
+            }
 
             // Palette RAM
             0x3F00...0x3F1F => palette[((address as usize) - 0x3F00) & 0x1F],
@@ -155,15 +176,55 @@ impl Controller for NROM {
     fn ppu_write(&mut self,
                  ram: &mut [u8],
                  palette: &mut [u8],
-                 _: &mut Cartridge,
+                 cartridge: &mut Cartridge,
                  address: u16,
                  value: u8)
                  -> bool {
         match address {
-            // Internal RAM (2KiB; mirrored once)
-            // TODO: Limit size access
+            // CHR-RAM
+            0x0000...0x1FFF if cartridge.chr_mutable => {
+                cartridge.chr[address as usize] = value;
+            }
+
+            // Internal RAM (2KiB; mirrored)
+            // TODO: Handle mirroring far better
             0x2000...0x3EFF => {
-                ram[((address as usize) - 0x2000) & 0x0FFF] = value;
+                let address = (address & 0xFFF) as usize;
+                if cartridge.vram_mirroring == 1 {
+                    match address {
+                        0x000...0x3FF => {
+                            ram[address] = value;
+                        }
+                        0x400...0x7FF => {
+                            ram[address - 0x400] = value;
+                        }
+                        0x800...0xBFF => {
+                            ram[address - 0x400] = value;
+                        }
+                        0xC00...0xFFF => {
+                            ram[address - 0x800] = value;
+                        }
+
+                        _ => unreachable!(),
+                    }
+                } else {
+                    match address {
+                        0x000...0x3FF => {
+                            ram[address] = value;
+                        }
+                        0x400...0x7FF => {
+                            ram[address] = value;
+                        }
+                        0x800...0xBFF => {
+                            ram[address - 0x800] = value;
+                        }
+                        0xC00...0xFFF => {
+                            ram[address - 0x800] = value;
+                        }
+
+                        _ => unreachable!(),
+                    }
+                }
             }
 
             // Palette RAM

@@ -11,10 +11,17 @@ pub struct Cartridge {
     pub prg_ram: Vec<u8>,
 
     /// Character ROM (CHR-ROM)
-    pub chr_rom: Vec<u8>,
+    pub chr: Vec<u8>,
+    pub chr_mutable: bool,
 
     /// iNES Mapper Number
     pub ines_mapper: u16,
+
+    /// Mirroring
+    ///     0 = Horizontal
+    ///     1 = Vertical
+    ///     2 = 4-Screen
+    pub vram_mirroring: u8,
 }
 
 impl Cartridge {
@@ -33,6 +40,9 @@ impl Cartridge {
             panic!("unknown or unsupported ROM-Image format");
         }
 
+        // Set mirroring mode of VRAM
+        self.vram_mirroring = header[6] & 0x1;
+
         // Read in PRG-ROM
         self.prg_rom.clear();
         if header[4] > 0 {
@@ -45,10 +55,13 @@ impl Cartridge {
         self.prg_ram.resize(prg_ram_size, 0);
 
         // Read in CHR-ROM
-        self.chr_rom.clear();
+        self.chr.clear();
         if header[5] > 0 {
-            self.chr_rom.resize((header[5] as usize) * 8 * 1024, 0);
-            stream.read_exact(&mut self.chr_rom).unwrap();
+            self.chr.resize((header[5] as usize) * 8 * 1024, 0);
+            stream.read_exact(&mut self.chr).unwrap();
+        } else {
+            self.chr.resize(1 * 8 * 1024, 0);
+            self.chr_mutable = true;
         }
 
         // Build iNes 1.0 mapper number

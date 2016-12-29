@@ -86,7 +86,7 @@ pub fn read(c: &mut Context, b: &mut Bus, mode: AddressingMode) -> u8 {
                 // Read from effective address; fix high byte of effective address
                 c.step(b);
                 b.read(address);
-                address += 0x100;
+                address = address.wrapping_add(0x100);
             }
 
             address
@@ -110,7 +110,7 @@ pub fn read(c: &mut Context, b: &mut Bus, mode: AddressingMode) -> u8 {
                 // Read from effective address; fix high byte of effective address
                 c.step(b);
                 b.read(address);
-                address += 0x100;
+                address = address.wrapping_add(0x100);
             }
 
             address
@@ -160,7 +160,7 @@ pub fn read(c: &mut Context, b: &mut Bus, mode: AddressingMode) -> u8 {
                 // Read from effective address; fix high byte of effective address
                 c.step(b);
                 b.read(address);
-                address += 0x100;
+                address = address.wrapping_add(0x100);
             }
 
             address
@@ -243,7 +243,7 @@ pub fn write(c: &mut Context, b: &mut Bus, mode: AddressingMode, r: u8) {
             c.step(b);
             b.read(address);
             if overflow_pg {
-                address += 0x100;
+                address = address.wrapping_add(0x100);
             }
 
             address
@@ -267,7 +267,7 @@ pub fn write(c: &mut Context, b: &mut Bus, mode: AddressingMode, r: u8) {
             c.step(b);
             b.read(address);
             if overflow_pg {
-                address += 0x100;
+                address = address.wrapping_add(0x100);
             }
 
             address
@@ -317,7 +317,7 @@ pub fn write(c: &mut Context, b: &mut Bus, mode: AddressingMode, r: u8) {
             c.step(b);
             b.read(address);
             if overflow_pg {
-                address += 0x100;
+                address = address.wrapping_add(0x100);
             }
 
             address
@@ -408,7 +408,7 @@ pub fn modify<F: Fn(&mut Context, &mut Bus, u8) -> u8>(c: &mut Context,
             c.step(b);
             b.read(address);
             if overflow_pg {
-                address += 0x100;
+                address = address.wrapping_add(0x100);
             }
 
             address
@@ -432,7 +432,7 @@ pub fn modify<F: Fn(&mut Context, &mut Bus, u8) -> u8>(c: &mut Context,
             c.step(b);
             b.read(address);
             if overflow_pg {
-                address += 0x100;
+                address = address.wrapping_add(0x100);
             }
 
             address
@@ -482,7 +482,7 @@ pub fn modify<F: Fn(&mut Context, &mut Bus, u8) -> u8>(c: &mut Context,
             c.step(b);
             b.read(address);
             if overflow_pg {
-                address += 0x100;
+                address = address.wrapping_add(0x100);
             }
 
             address
@@ -772,9 +772,9 @@ pub fn branch(c: &mut Context, b: &mut Bus, flag: Flags, flag_check: bool) {
         if overflow_pg {
             c.step(b);
             if operand > 0 {
-                c.pc += 0x100;
+                c.pc = c.pc.wrapping_add(0x100);
             } else {
-                c.pc -= 0x100;
+                c.pc = c.pc.wrapping_sub(0x100);
             }
         }
     }

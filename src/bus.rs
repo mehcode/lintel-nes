@@ -1,12 +1,16 @@
 use mmu;
 use cpu;
 use ppu;
+use apu;
 use cartridge;
 
 #[derive(Default)]
 pub struct Bus {
     /// Component: PPU
     pub ppu: ppu::PPU,
+
+    /// Component: APU
+    apu: apu::APU,
 
     /// Component: Memory Controller
     mmu: mmu::MMU,
@@ -19,10 +23,13 @@ impl Bus {
 
     pub fn reset(&mut self) {
         self.ppu.reset();
+        self.apu.reset();
         self.mmu.reset();
     }
 
     pub fn step(&mut self) {
+        self.apu.step();
+
         // 3 PPU Steps ("dots") to 1 CPU Step ("cycle")
         self.ppu.step(&mut self.mmu);
         self.ppu.step(&mut self.mmu);
@@ -37,27 +44,46 @@ impl Bus {
 
         match address {
             // PPU Registers
-            0x2000...0x2007 => self.ppu.read(&mut self.mmu, address),
+            0x2000...0x3FFF => self.ppu.read(&mut self.mmu, address),
+
+            // APU Registers
+            0x4000...0x4013 | 0x4015 | 0x4017 => self.apu.read(address),
 
             // Unimplemented I/O ports
-            0x4000...0x401F => 0xFF,
+            0x4000...0x401F => 0,
 
             _ => {
                 warn!("unhandled read at ${:04X}", address);
 
-                0xFF
+                0
             }
         }
     }
 
     pub fn write(&mut self, address: u16, value: u8) {
+        if address == 0x6000 {
+            warn!("write: $6000 <- ${:02X}", value);
+
+            let mut i = 0;
+            loop {
+                let c = self.read(0x6004 + i);
+                if c == 0x00 {
+                    break;
+                }
+
+                print!("{}", c as char);
+
+                i += 1;
+            }
+        }
+
         if cpu::Controller::try_write(&mut self.mmu, address, value) {
             return;
         }
 
         match address {
             // PPU Registers
-            0x2000...0x2007 => self.ppu.write(&mut self.mmu, address, value),
+            0x2000...0x3FFF => self.ppu.write(&mut self.mmu, address, value),
 
             // OAM DMA
             0x4014 => {
@@ -70,6 +96,11 @@ impl Bus {
 
                     src += 1;
                 }
+            }
+
+            // APU Registers
+            0x4000...0x4013 | 0x4015 | 0x4017 => {
+                self.apu.write(address, value);
             }
 
             // Unimplemented I/O ports
