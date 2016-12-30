@@ -49,9 +49,6 @@ impl Bus {
             // APU Registers
             0x4000...0x4013 | 0x4015 | 0x4017 => self.apu.read(address),
 
-            // Unimplemented I/O ports
-            0x4000...0x401F => 0,
-
             _ => {
                 warn!("unhandled read at ${:04X}", address);
 
@@ -102,9 +99,6 @@ impl Bus {
             0x4000...0x4013 | 0x4015 | 0x4017 => {
                 self.apu.write(address, value);
             }
-
-            // Unimplemented I/O ports
-            0x4000...0x401F => {}
 
             _ => {
                 warn!("unhandled write at ${:04X} with ${:02X} ({})",
