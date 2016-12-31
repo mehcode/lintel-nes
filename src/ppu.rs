@@ -92,6 +92,9 @@ const PALETTE: [(u8, u8, u8); 0x40] = [(0x65, 0x65, 0x65),
 
 #[derive(Default)]
 pub struct PPU {
+    /// Callback: Refresh (v-blank)
+    on_refresh: Option<Box<FnMut(Frame) -> ()>>,
+
     /// FrameBuffer
     pub framebuffer: Vec<u8>,
 
@@ -202,9 +205,6 @@ pub struct PPU {
     /// NOTE: The upper bits are the current tile and the lower bits are
     ///       the next tile.
     cur_attribute: u16,
-
-    /// Callback: Refresh (v-blank)
-    on_refresh: Option<Box<FnMut(Frame) -> ()>>,
 }
 
 impl PPU {
@@ -221,13 +221,11 @@ impl PPU {
         self.sprite_16 = false;
         self.sprite_pattern_table_select = false;
         self.ram_address_increment = false;
-        self.nmi_enable = false;
-
         self.vblank = false;
         self.supress_vblank = false;
-        self.nmi_timer = 0;
 
-        self.w = false;
+        self.nmi_enable = false;
+        self.nmi_timer = 0;
 
         self.oam.clear();
         self.oam.resize(256, 0);
@@ -509,12 +507,6 @@ impl PPU {
             if self.line >= 262 {
                 // End of screen
                 self.line = 0;
-
-                // If this next frame is an _odd_ frame (and rendering is enabled);
-                // skip the idle dot of the first scanline
-                // if self.frame_odd && (self.background_enable || self.sprite_enable) {
-                //     self.dots += 1;
-                // }
             }
         }
     }
