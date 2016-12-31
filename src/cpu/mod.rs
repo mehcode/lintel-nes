@@ -82,13 +82,11 @@ impl Context {
 pub struct CPU {
     pub ctx: Context,
     table: table::Table,
-    nmi_pending: bool,
 }
 
 impl CPU {
     pub fn reset(&mut self, b: &mut Bus) {
         self.ctx.reset(b);
-        self.nmi_pending = false;
     }
 
     /// Run Next Instruction
@@ -127,6 +125,8 @@ impl CPU {
 
         // Check for pending NMI IRQ
         if b.nmi_occurred {
+            trace!("NMI ------------------------------------------");
+
             // Push PCH on stack; decrement S
             self.ctx.step(b);
             b.write(0x100 + self.ctx.s as u16, (self.ctx.pc >> 8) as u8);
@@ -155,12 +155,7 @@ impl CPU {
             // Set the IRQ Disable flag
             self.ctx.p.insert(IRQ_DISABLE);
 
-            b.nmi_occurred = false;
-        }
-
-        // Check for NMI; schedule IRQ after this next instruction
-        if b.nmi_occurred {
-            self.nmi_pending = true;
+            // NMI was handled; unset flag
             b.nmi_occurred = false;
         }
     }
