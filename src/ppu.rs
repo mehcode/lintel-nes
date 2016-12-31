@@ -214,7 +214,6 @@ impl PPU {
         self.framebuffer.resize(WIDTH * HEIGHT * 4, 0);
 
         self.background_pattern_table_select = false;
-        self.base_nametable_address = 0;
         self.sprite_16 = false;
         self.sprite_pattern_table_select = false;
         self.ram_address_increment = false;
