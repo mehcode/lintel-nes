@@ -82,11 +82,13 @@ impl Context {
 pub struct CPU {
     pub ctx: Context,
     table: table::Table,
+    nmi_pending: bool,
 }
 
 impl CPU {
     pub fn reset(&mut self, b: &mut Bus) {
         self.ctx.reset(b);
+        self.nmi_pending = false;
     }
 
     /// Run Next Instruction
@@ -121,6 +123,45 @@ impl CPU {
             (handle)(&mut self.ctx, b);
         } else {
             panic!(format!("unknown opcode ${:02X} at ${:04X}", opcode, _pc))
+        }
+
+        // Check for pending NMI IRQ
+        if b.nmi_occurred {
+            // Push PCH on stack; decrement S
+            self.ctx.step(b);
+            b.write(0x100 + self.ctx.s as u16, (self.ctx.pc >> 8) as u8);
+            self.ctx.s = self.ctx.s.wrapping_sub(1);
+
+            // Push PCL on stack; decrement S
+            self.ctx.step(b);
+            b.write(0x100 + self.ctx.s as u16, self.ctx.pc as u8);
+            self.ctx.s = self.ctx.s.wrapping_sub(1);
+
+            // Push P on stack (with BRK and UNUSED set); decrement S
+            self.ctx.step(b);
+            b.write(0x100 + self.ctx.s as u16,
+                    (self.ctx.p | BREAK).bits() | 0x20);
+            self.ctx.s = self.ctx.s.wrapping_sub(1);
+
+            // Fetch PCL
+            self.ctx.step(b);
+            let l = b.read(0xFFFA);
+
+            // Fetch PCH
+            self.ctx.step(b);
+            let h = b.read(0xFFFB);
+            self.ctx.pc = l as u16 | ((h as u16) << 8);
+
+            // Set the IRQ Disable flag
+            self.ctx.p.insert(IRQ_DISABLE);
+
+            b.nmi_occurred = false;
+        }
+
+        // Check for NMI; schedule IRQ after this next instruction
+        if b.nmi_occurred {
+            self.nmi_pending = true;
+            b.nmi_occurred = false;
         }
     }
 }

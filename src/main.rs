@@ -1,4 +1,5 @@
 #![feature(type_ascription)]
+#![feature(range_contains)]
 
 extern crate sdl2;
 

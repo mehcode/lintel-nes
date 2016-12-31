@@ -14,6 +14,9 @@ pub struct Bus {
 
     /// Component: Memory Controller
     mmu: mmu::MMU,
+
+    /// NMI occurred (signal); set by the PPU and read by the CPU
+    pub nmi_occurred: bool,
 }
 
 impl Bus {
@@ -22,6 +25,8 @@ impl Bus {
     }
 
     pub fn reset(&mut self) {
+        self.nmi_occurred = false;
+
         self.ppu.reset();
         self.apu.reset();
         self.mmu.reset();
@@ -31,9 +36,9 @@ impl Bus {
         self.apu.step();
 
         // 3 PPU Steps ("dots") to 1 CPU Step ("cycle")
-        self.ppu.step(&mut self.mmu);
-        self.ppu.step(&mut self.mmu);
-        self.ppu.step(&mut self.mmu);
+        self.ppu.step(&mut self.mmu, &mut self.nmi_occurred);
+        self.ppu.step(&mut self.mmu, &mut self.nmi_occurred);
+        self.ppu.step(&mut self.mmu, &mut self.nmi_occurred);
     }
 
     pub fn read(&mut self, address: u16) -> u8 {
@@ -48,6 +53,9 @@ impl Bus {
 
             // APU Registers
             0x4000...0x4013 | 0x4015 | 0x4017 => self.apu.read(address),
+
+            // TODO: Input
+            0x4016 => 0,
 
             _ => {
                 warn!("unhandled read at ${:04X}", address);
@@ -99,6 +107,9 @@ impl Bus {
             0x4000...0x4013 | 0x4015 | 0x4017 => {
                 self.apu.write(address, value);
             }
+
+            // TODO: Input
+            0x4016 => {}
 
             _ => {
                 warn!("unhandled write at ${:04X} with ${:02X} ({})",

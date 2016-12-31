@@ -8,6 +8,20 @@ use std::vec::Vec;
 // Generate memory Controller trait for PPU
 make_controller!();
 
+pub struct Frame<'a> {
+    // Pixel data
+    pub data: &'a [u8],
+
+    // Pixel pitch
+    pub pitch: usize,
+
+    // Width (in pixels)
+    pub width: usize,
+
+    // Height (in pixels)
+    pub height: usize,
+}
+
 pub const WIDTH: usize = 256;
 pub const HEIGHT: usize = 240;
 
@@ -117,6 +131,12 @@ pub struct PPU {
     /// In V-Blank (outwords facing flag)
     pub vblank: bool,
 
+    /// Set to suppress normal V-Blank set during `step`
+    supress_vblank: bool,
+
+    /// Set when NMI occurs as the signal is delayed 1 dot
+    nmi_timer: u8,
+
     /// Current scanline being rendered (261 = -1)
     line: u16,
 
@@ -168,11 +188,30 @@ pub struct PPU {
     /// "Next" Tile Bitmap Hi (color bit 1 of tile data) in use by the tile fetch routine
     nx_tile_hi: u8,
 
-    /// "Current" Tile Data in use by the rendering pipeline.
-    cur_tile: u64,
+    /// "Current" Tile Data Hi in use by the rendering pipeline.
+    /// NOTE: The upper bits are the current tile and the lower bits are
+    ///       the next tile.
+    cur_tile_hi: u16,
+
+    /// "Current" Tile Data Lo in use by the rendering pipeline.
+    /// NOTE: The upper bits are the current tile and the lower bits are
+    ///       the next tile.
+    cur_tile_lo: u16,
+
+    /// "Current" Attribute Data in use by the rendering pipeline.
+    /// NOTE: The upper bits are the current tile and the lower bits are
+    ///       the next tile.
+    cur_attribute: u16,
+
+    /// Callback: Refresh (v-blank)
+    on_refresh: Option<Box<FnMut(Frame) -> ()>>,
 }
 
 impl PPU {
+    pub fn set_on_refresh(&mut self, callback: Box<FnMut(Frame) -> ()>) {
+        self.on_refresh = Some(callback);
+    }
+
     pub fn reset(&mut self) {
         self.framebuffer.clear();
         self.framebuffer.resize(WIDTH * HEIGHT * 4, 0);
@@ -185,6 +224,8 @@ impl PPU {
         self.nmi_enable = false;
 
         self.vblank = false;
+        self.supress_vblank = false;
+        self.nmi_timer = 0;
 
         self.w = false;
 
@@ -209,7 +250,9 @@ impl PPU {
         self.nx_tile_lo = 0;
         self.nx_tile_hi = 0;
 
-        self.cur_tile = 0;
+        self.cur_tile_lo = 0;
+        self.cur_tile_hi = 0;
+        self.cur_attribute = 0;
     }
 
     fn fetch_nametable(&mut self, c: &mut Controller) {
@@ -287,31 +330,33 @@ impl PPU {
     }
 
     fn increment_vert_v(&mut self) {
-        // TODO: Understand this
         if self.v & 0x7000 != 0x7000 {
-            // Increment "fine Y"
+            // Increment "Fine Y" (row number of tile)
             self.v += 0x1000;
         } else {
-            // Set "fine Y" to 0
-            self.v &= 0x8FFF;
+            // "Fine Y" overflows into "Coarse Y" (line on screen)
+            let mut coarse_y = (self.v & 0x3E0) >> 5;
 
-            // Let y = "coarse Y"
-            let mut y = (self.v & 0x3E0) >> 5;
-            if y == 29 {
-                // Set "coarse Y" to 0
-                y = 0;
-                // Switch vertical nametable
+            // Set "Fine Y" to 0
+            self.v &= !0x7000;
+
+            if coarse_y == 29 {
+                // "Coarse Y" overflows by toggling to vertical
+                // nametable (mirroring)
+                coarse_y = 0;
                 self.v ^= 0x0800;
-            } else if y == 31 {
-                // Set "coarse Y" to 0; don't switch nametable
-                y = 0;
+            } else if coarse_y == 31 {
+                // "Coarse Y" is out of bounds (because it was set
+                // directly). It can be incremented till 31 in which
+                // it is then set to 0 where it will not toggle the vertical
+                // nametable.
+                coarse_y = 0;
             } else {
-                // Increment "coarse Y"
-                y += 1;
+                // Increment "Coarse Y"
+                coarse_y += 1;
             }
 
-            // Put "coarse Y" back into v
-            self.v = (self.v & 0xFC1F) | (y << 5);
+            self.v = (self.v & !0x3E0) | (coarse_y << 5);
         }
     }
 
@@ -328,7 +373,11 @@ impl PPU {
         let (mut r, mut g, mut b) = (0, 0, 0);
 
         if self.background_enable {
-            let palette_index = ((self.cur_tile >> 32) >> ((7 - self.x) << 2)) & 0x0F;
+            let a = (self.cur_attribute >> 8) as u8;
+            let p1 = (self.cur_tile_lo >> (15 - self.x)) as u8;
+            let p2 = ((self.cur_tile_hi >> (15 - self.x)) as u8) << 1;
+            let palette_index = (a | p1 | p2) & 0x0F;
+
             let color = c.read(0x3F00 + palette_index as u16);
 
             // TODO(rust): Is there a way to assign directly to the mutable tuple?
@@ -344,92 +393,108 @@ impl PPU {
         self.framebuffer[offset + 3] = 0xFF;
     }
 
-    pub fn step(&mut self, c: &mut Controller) {
-        let is_line_render = self.line <= 239;
-        let is_line_active = self.line == 261 || is_line_render;
-        let is_dot_render = self.dots >= 1 && self.dots <= 256;
-        let is_dot_prefetch = self.dots >= 321 && self.dots <= 336;
-        let is_dot_fetch = is_dot_render || is_dot_prefetch;
-        let is_dot_shift = (self.dots >= 2 && self.dots <= 257) ||
-                           (self.dots >= 322 && self.dots <= 337);
+    pub fn step(&mut self, c: &mut Controller, nmi_occurred: &mut bool) {
+        // On ODD Frames; the 338th dot of line 261 (-1) is skipped if
+        // rendering is enabled
+        if self.line == 261 && self.dots == 338 && self.frame_odd &&
+           (self.background_enable || self.sprite_enable) {
+            self.dots += 1;
+        }
 
+        // Check for pending NMI
+        if self.nmi_timer > 0 {
+            self.nmi_timer -= 1;
+            if self.nmi_timer == 0 {
+                *nmi_occurred = true;
+            }
+        }
 
         // Render
-        if is_line_render && is_dot_render {
+        if self.line <= 239 && (1..257).contains(self.dots) {
             self.render_pixel(c);
         }
 
         // Background: Fetch
-        if is_line_active {
-            if is_dot_shift && self.background_enable {
-                self.cur_tile <<= 4;
-            }
+        if self.background_enable {
+            if self.line == 261 || self.line <= 239 {
+                // Each dot after a dot that was renderable; we should
+                // shift the current tile data registers by 1
+                if (2..258).contains(self.dots) || (322..338).contains(self.dots) {
+                    self.cur_tile_lo <<= 1;
+                    self.cur_tile_hi <<= 1;
+                }
 
-            if is_dot_fetch && self.background_enable {
-                // Every other dot; another step in the fetch process
-                match self.dots % 8 {
-                    1 => self.fetch_nametable(c),
-                    3 => self.fetch_attribute(c),
-                    5 => self.fetch_tile_lo(c),
-                    7 => self.fetch_tile_hi(c),
+                if (1..257).contains(self.dots) || (321..337).contains(self.dots) {
+                    match self.dots % 8 {
+                        2 => self.fetch_nametable(c),
+                        3 => self.fetch_attribute(c),
+                        5 => self.fetch_tile_lo(c),
+                        7 => self.fetch_tile_hi(c),
 
-                    0 => {
-                        // Compute tile data
-                        let mut data: u32 = 0;
-                        for _ in 0..8 {
-                            let p1 = (self.nx_tile_lo & 0x80) >> 7;
-                            let p2 = (self.nx_tile_hi & 0x80) >> 6;
+                        0 => {
+                            // Reload shift registers
+                            self.cur_tile_hi |= self.nx_tile_hi as u16;
+                            self.cur_tile_lo |= self.nx_tile_lo as u16;
 
-                            self.nx_tile_lo <<= 1;
-                            self.nx_tile_hi <<= 1;
+                            self.cur_attribute <<= 8;
+                            self.cur_attribute |= self.nx_attribute as u16;
 
-                            data <<= 4;
-                            data |= (self.nx_attribute | p1 | p2) as u32;
+                            // Increment horz(v)
+                            self.increment_horz_v();
                         }
 
-                        self.cur_tile |= data as u64;
-
-                        // Increment horz(v)
-                        self.increment_horz_v();
+                        _ => {}
                     }
+                }
 
-                    _ => {
-                        // Do nothing
-                    }
+                // Increment `vert(v)`
+                if self.dots == 256 {
+                    self.increment_vert_v();
+                }
+
+                // Reload `horz(v)`
+                if self.dots == 257 {
+                    self.reload_horz_v();
                 }
             }
 
-            if self.dots == 256 && self.background_enable {
-                // Increment vert(v)
-                self.increment_vert_v();
-            }
-
-            if self.dots == 257 && self.background_enable {
-                // Reload horz(v)
-                self.reload_horz_v();
-            }
-        }
-
-        // Pre-Render (261 / -1)
-        if self.line == 261 {
-            if self.dots == 1 {
-                // Clear: V-Blank
-                self.vblank = false;
-
-                // TODO: Clear: Sprite Overflow
-                // TODO: Clear: Sprite 0 Hit
-            }
-
-            if self.dots >= 280 && self.dots <= 304 && self.background_enable {
+            // On line 261 (-1); there is a short period where `vert(v)` is
+            // repeatedly reloaded with `vert(t)`
+            if self.line == 261 && (280..305).contains(self.dots) {
                 self.reload_vert_v();
             }
         }
 
-        if self.line == 241 && self.dots == 1 {
-            // Set V-Blank on the 2nd dot of the 2nd line in V-Blank
-            self.vblank = true;
+        // Clear V-Blank (and other PPU flags)
+        if self.line == 261 && self.dots == 1 {
+            self.vblank = false;
+            self.frame_odd = !self.frame_odd;
 
-            // TODO: Raise NMI (if enabled)
+            // TODO: Clear: Sprite Overflow
+            // TODO: Clear: Sprite 0 Hit
+        }
+
+        // Set V-Blank on the 2nd dot of the 2nd line in V-Blank
+        if self.line == 241 && self.dots == 1 {
+            if !self.supress_vblank {
+                self.vblank = true;
+
+                if self.nmi_enable {
+                    self.nmi_timer = 2;
+                }
+
+                // Trigger the front-end to refresh the scren
+                if let Some(ref mut on_refresh) = self.on_refresh {
+                    (on_refresh)(Frame {
+                        data: &self.framebuffer,
+                        width: WIDTH,
+                        height: HEIGHT,
+                        pitch: WIDTH * 4,
+                    });
+                }
+            } else {
+                self.supress_vblank = false;
+            }
         }
 
         // Increment dot counter
@@ -444,231 +509,31 @@ impl PPU {
             if self.line >= 262 {
                 // End of screen
                 self.line = 0;
-                self.frame_odd = !self.frame_odd;
 
                 // If this next frame is an _odd_ frame (and rendering is enabled);
                 // skip the idle dot of the first scanline
-                if self.frame_odd && (self.background_enable || self.sprite_enable) {
-                    self.dots += 1;
-                }
+                // if self.frame_odd && (self.background_enable || self.sprite_enable) {
+                //     self.dots += 1;
+                // }
             }
         }
-
-        // if (self.line == 261 || self.line <= 239) && self.dots <= 257 && self.dots > 0 {
-        //     // Visible (0 ... 239) and Pre-render (-1 / 261)
-        //
-        //     // Get pixel value at current dot
-        //     if self.dots < 257 && self.line < 240 {
-        //         if self.background_enable {
-        //             let palette_i = ((self.tile_lo >> 7) | ((self.tile_hi >> 7) << 1)) | self.at;
-        //             let palette_c = c.read(0x3F00 + palette_i as u16);
-        //             let (r, g, b) = PALETTE[palette_c as usize];
-        //
-        //             // if x < 16 && self.line < 16 {
-        //             //     // This should be all black!
-        //             //     warn!("[dots: {}, line: {}] palette_i: ${:02X} palette_c: ${:02X}",
-        //             //           self.dots,
-        //             //           self.line,
-        //             //           palette_i,
-        //             //           palette_c);
-        //             // }
-        //
-        //             let fb_offset = (self.line as usize * WIDTH + (self.dots as usize - 1)) * 4;
-        //             self.framebuffer[fb_offset] = b;
-        //             self.framebuffer[fb_offset + 1] = g;
-        //             self.framebuffer[fb_offset + 2] = r;
-        //             self.framebuffer[fb_offset + 3] = 0xFF;
-        //
-        //             // Shift tile and attribute byte
-        //             self.tile_hi <<= 1;
-        //             self.tile_lo <<= 1;
-        //         } else {
-        //             let fb_offset = (self.line as usize * WIDTH + (self.dots as usize - 1)) * 4;
-        //
-        //             self.framebuffer[fb_offset] = 0;
-        //             self.framebuffer[fb_offset + 1] = 0;
-        //             self.framebuffer[fb_offset + 2] = 0;
-        //             self.framebuffer[fb_offset + 3] = 0xFF;
-        //         }
-        //     }
-        //
-        //     // Prepare next tile for rendering
-        //     if self.background_enable {
-        //         let rem = self.dots % 8;
-        //         let nt_address = (self.v & 0xFFF) | 0x2000;
-        //         let tile_base = if self.background_pattern_table_select {
-        //             0x1000
-        //         } else {
-        //             0x0000
-        //         };
-        //
-        //         if rem == 1 {
-        //             // Fetch: Nametable (NT) at dot 1,9,17,...,249
-        //             self.nt = c.read(nt_address);
-        //             // if self.line < 8 {
-        //             // warn!("Nametable ({}:{}): ${:04X} -> ${:02X}",
-        //             //       self.line,
-        //             //       self.dots,
-        //             //       nt_address,
-        //             //       self.nt);
-        //             // }
-        //         }
-        //
-        //         if rem == 3 {
-        //             // Fetch: Attribute (AT) at dot 3,11,19,...,251
-        //             // TODO: Understand
-        //             let at_address = 0x23C0 | (self.v & 0x0C00) | ((self.v >> 4) & 0x38) |
-        //                              ((self.v >> 2) & 0x07);
-        //
-        //             let shift = ((self.v >> 4) & 4) | (self.v & 2);
-        //             self.at_next = ((c.read(at_address) >> shift) & 3) << 2;
-        //         }
-        //
-        //         if rem == 5 {
-        //             // Fetch: Background Tile Low at dot 5,13,21,...,253
-        //             let tile_address = ((self.v >> 12) & 0x7) | tile_base | ((self.nt as u16) << 4);
-        //             self.tile_next_lo = c.read(tile_address);
-        //             // if self.line < 8 {
-        //             //     warn!("Tile Lo ({}:{}): [tile: {}, fine y: {}] ${:04X} -> ${:02X}",
-        //             //           self.line,
-        //             //           self.dots,
-        //             //           self.nt,
-        //             //           ((self.v >> 12) & 0x7),
-        //             //           tile_address,
-        //             //           self.tile_next_lo);
-        //             // }
-        //         }
-        //
-        //         if rem == 7 {
-        //             // Fetch: Background Tile High at dot 7,15,23,...,255
-        //             let tile_address = ((self.v >> 12) & 0x7) | 0x8 | tile_base |
-        //                                ((self.nt as u16) << 4);
-        //             self.tile_next_hi = c.read(tile_address);
-        //             // warn!("Tile ({}) Hi: ${:04X} -> ${:02X}",
-        //             //       self.nt,
-        //             //       tile_address,
-        //             //       self.tile_next_hi);
-        //         }
-        //
-        //         if rem == 0 && self.dots != 0 && self.dots <= 248 {
-        //             // Reload shifts
-        //             // info!("inc hori(v) [ dots: {} / line: {} ]", self.dots, self.line);
-        //             self.tile_hi = self.tile_next_hi;
-        //             self.tile_lo = self.tile_next_lo;
-        //             self.at = self.at_next;
-        //
-        //             // Increment: Vx at dots 8,16,...,64,...,248
-        //             // TODO: Understand this
-        //             if self.v & 0x1F == 31 {
-        //                 self.v &= 0xFFE0;     // coarse X = 0
-        //                 self.v ^= 0x0400;     // switch horizontal nametable
-        //             } else {
-        //                 self.v += 1;          // increment coarse X
-        //             }
-        //         }
-        //
-        //         if self.dots == 256 {
-        //             // Increment: Vy at dot 256
-        //             // TODO: Understand this
-        //
-        //             if self.v & 0x7000 != 0x7000 {
-        //                 // Increment "fine Y"
-        //                 self.v += 0x1000;
-        //             } else {
-        //                 // Set "fine Y" to 0
-        //                 self.v &= 0x8FFF;
-        //
-        //                 // Let y = "coarse Y"
-        //                 let mut y = (self.v & 0x3E0) >> 5;
-        //                 if y == 29 {
-        //                     // Set "coarse Y" to 0
-        //                     y = 0;
-        //                     // Switch vertical nametable
-        //                     self.v ^= 0x0800;
-        //                 } else if y == 31 {
-        //                     // Set "coarse Y" to 0; don't switch nametable
-        //                     y = 0;
-        //                 } else {
-        //                     // Increment "coarse Y"
-        //                     y += 1;
-        //                 }
-        //
-        //                 // Put "coarse Y" back into v
-        //                 self.v = (self.v & 0xFC1F) | (y << 5);
-        //             }
-        //         }
-        //
-        //         if self.dots == 257 {
-        //             // info!("hori(v) = hori(t) [ dots: {} / line: {} ]",
-        //             //       self.dots,
-        //             //       self.line);
-        //             // Initilize: Vx to Tx at dot 257
-        //             // TODO: Understand this
-        //             self.v &= !0x41F;
-        //             self.v |= self.t & 0x41F;
-        //         }
-        //     }
-        // }
-        //
-        // if self.line == 261 {
-        //     // Pre-render (-1 / 261)
-        //     if self.dots == 1 {
-        //         // Clear: V-Blank
-        //         self.vblank = false;
-        //
-        //         // TODO: Clear: Sprite Overflow
-        //         // TODO: Clear: Sprite 0 Hit
-        //     }
-        //
-        //     if self.dots >= 280 && self.dots <= 304 && self.background_enable {
-        //         // Initilize: Vy to Ty
-        //         // info!("vert(v) = vert(t) [ dots: {} / line: {} ]",
-        //         //       self.dots,
-        //         //       self.line);
-        //
-        //         self.v &= !0x7BE0;
-        //         self.v |= self.t & 0x7BE0;
-        //     }
-        // }
-        //
-        // if self.line >= 240 && self.line <= 260 {
-        //     // In V-Blank; do mostly nothing
-        //     if self.line == 241 && self.dots == 1 {
-        //         // Set V-Blank
-        //         self.vblank = true;
-        //
-        //         // TODO: Raise NMI (if enabled)
-        //         // TODO: Signal screen refresh (to front-end)
-        //     }
-        // }
-        //
-        // // Increment dot counter
-        // self.dots += 1;
-        //
-        // // Increment line counter; handle end-of-*
-        // if self.dots >= 341 {
-        //     // End of scanline
-        //     self.line += 1;
-        //     self.dots = 0;
-        //
-        //     if self.line >= 262 {
-        //         // End of screen
-        //         self.line = 0;
-        //         self.frame_odd = !self.frame_odd;
-        //
-        //         // If this next frame is an _odd_ frame (and rendering is enabled);
-        //         // skip the idle dot of the first scanline
-        //         if self.frame_odd && (self.background_enable || self.sprite_enable) {
-        //             self.dots += 1;
-        //         }
-        //     }
-        // }
     }
 
     pub fn read(&mut self, _: &mut Controller, address: u16) -> u8 {
         match address % 8 {
-            // TODO: Least significant bits previously written into a PPU register (0..3)
             2 => {
+                if self.line == 241 {
+                    if self.dots == 1 {
+                        // Reading $2002 exactly 1 dot _before_ V-Blank should
+                        // be set
+                        self.supress_vblank = true;
+                    } else if self.dots <= 3 {
+                        // Reading $2002 on or exactly 1 dot _after_ V-Blank
+                        // is set results in the NMI not being fired
+                        self.nmi_timer = 0;
+                    }
+                }
+
                 let r = (self.vblank as u8) << 7;
 
                 // Reading the status register will clear `vblank` and also
@@ -689,6 +554,8 @@ impl PPU {
     pub fn write(&mut self, c: &mut Controller, address: u16, value: u8) {
         match address % 8 {
             0 => {
+                let prev_nmi_enable = self.nmi_enable;
+
                 self.nmi_enable = value & 0x80 != 0;
                 self.sprite_16 = value & 0x20 != 0;
                 self.background_pattern_table_select = value & 0x10 != 0;
@@ -700,6 +567,17 @@ impl PPU {
                     // Entering slave mode .. the hell?
                     warn!("unimplemented: NES PPU slave mode (this shorts the EXT circuit on a \
                             real NES so what do you want us to do here)");
+                }
+
+                if !prev_nmi_enable && self.nmi_enable && self.vblank && self.dots != 1 {
+                    // If NMI was disabled and is now enabled, AND; V-Blank is
+                    // still set, trigger NMI again
+                    // NOTE: Enabling NMI the exact PPU dot that NMI should go out
+                    //       normally causes NMI to not go out at all
+                    self.nmi_timer = 2;
+                } else if prev_nmi_enable && !self.nmi_enable {
+                    // Prevent NMI from occuring; it was just disabled
+                    self.nmi_timer = 0;
                 }
             }
 
@@ -755,16 +633,7 @@ impl PPU {
                 c.write(self.v, value);
 
                 // Increment "Current" VRAM Address
-                // TODO: Should T change at all here?
-                // TODO: Check through math and make sure this does indeed handling all the
-                //       weirdness that is V
-                if self.ram_address_increment {
-                    self.v += 32;
-                    self.t += 32;
-                } else {
-                    self.v += 1;
-                    self.t += 1;
-                }
+                self.v += if self.ram_address_increment { 32 } else { 1 };
             }
 
             _ => {
