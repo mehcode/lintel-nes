@@ -113,9 +113,6 @@ pub struct PPU {
     /// [PPUCTRL:2] RAM Address Increment (0 = +1, 1 = +32)
     ram_address_increment: bool,
 
-    /// [PPUCTRL:0..1] Base Nametable Address (2-bit)
-    base_nametable_address: u8,
-
     /// [PPUMASK:0] Monochrome
     monochrome: bool,
 
@@ -553,7 +550,9 @@ impl PPU {
                 self.background_pattern_table_select = value & 0x10 != 0;
                 self.sprite_pattern_table_select = value & 0x08 != 0;
                 self.ram_address_increment = value & 0x04 != 0;
-                self.base_nametable_address = value & 0x03;
+
+                // Bits 0-1 affect base nametable address which is in bits 10-11 of T
+                self.t = (self.t & !0xC00) | ((value as u16 & 0x03) << 10);
 
                 if value & 0x40 != 0 {
                     // Entering slave mode .. the hell?
@@ -571,6 +570,7 @@ impl PPU {
                     // Prevent NMI from occuring; it was just disabled
                     self.nmi_timer = 0;
                 }
+
             }
 
             1 => {
