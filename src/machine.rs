@@ -2,6 +2,7 @@ use cartridge::Cartridge;
 use bus;
 use cpu;
 use ppu;
+use sdl2::keyboard::Scancode;
 
 #[derive(Default)]
 pub struct Machine {
@@ -19,6 +20,14 @@ impl Machine {
 
     pub fn set_on_video_refresh(&mut self, callback: Box<FnMut(ppu::Frame) -> ()>) {
         self.bus.ppu.set_on_refresh(callback);
+    }
+
+    pub fn on_key_down(&mut self, scancode: Scancode) {
+        self.bus.input.on_key_down(scancode);
+    }
+
+    pub fn on_key_up(&mut self, scancode: Scancode) {
+        self.bus.input.on_key_up(scancode);
     }
 
     pub fn open(&mut self, filename: &str) {

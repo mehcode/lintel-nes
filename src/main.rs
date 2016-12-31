@@ -21,6 +21,7 @@ mod bus;
 mod cpu;
 mod ppu;
 mod apu;
+mod input;
 
 mod cartridge;
 
@@ -85,30 +86,29 @@ fn main() {
                     is_running = false;
                 }
 
-                // Event::KeyDown { scancode, repeat, .. } => {
-                //     if !repeat {
-                //         if let Some(scancode) = scancode {
-                //             m.on_key_down(scancode);
-                //         }
-                //     }
-                // }
-                //
-                // Event::KeyUp { scancode, repeat, .. } => {
-                //     if !repeat {
-                //         if let Some(scancode) = scancode {
-                //             m.on_key_up(scancode);
-                //         }
-                //     }
-                // }
+                Event::KeyDown { scancode, repeat, .. } => {
+                    if !repeat {
+                        if let Some(scancode) = scancode {
+                            m.on_key_down(scancode);
+                        }
+                    }
+                }
+
+                Event::KeyUp { scancode, repeat, .. } => {
+                    if !repeat {
+                        if let Some(scancode) = scancode {
+                            m.on_key_up(scancode);
+                        }
+                    }
+                }
+
                 _ => {
                     // Unhandled event
                 }
             }
         }
 
-        // Run: Machine (for 5000 cycles)
-        for _ in 1..5000 {
-            m.run();
-        }
+        // Run: Machine
+        m.run();
     }
 }

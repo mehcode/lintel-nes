@@ -2,6 +2,7 @@ use mmu;
 use cpu;
 use ppu;
 use apu;
+use input;
 use cartridge;
 
 #[derive(Default)]
@@ -14,6 +15,9 @@ pub struct Bus {
 
     /// Component: Memory Controller
     mmu: mmu::MMU,
+
+    /// Component: Input
+    pub input: input::Input,
 
     /// NMI occurred (signal); set by the PPU and read by the CPU
     pub nmi_occurred: bool,
@@ -30,6 +34,7 @@ impl Bus {
         self.ppu.reset();
         self.apu.reset();
         self.mmu.reset();
+        self.input.reset();
     }
 
     pub fn step(&mut self) {
@@ -52,10 +57,10 @@ impl Bus {
             0x2000...0x3FFF => self.ppu.read(&mut self.mmu, address),
 
             // APU Registers
-            0x4000...0x4013 | 0x4015 | 0x4017 => self.apu.read(address),
+            0x4000...0x4013 | 0x4015 => self.apu.read(address),
 
-            // TODO: Input
-            0x4016 => 0,
+            // Input
+            0x4016 | 0x4017 => self.input.read(address),
 
             _ => {
                 warn!("unhandled read at ${:04X}", address);
@@ -88,7 +93,9 @@ impl Bus {
 
         match address {
             // PPU Registers
-            0x2000...0x3FFF => self.ppu.write(&mut self.mmu, address, value),
+            0x2000...0x3FFF => {
+                self.ppu.write(&mut self.mmu, address, value);
+            }
 
             // OAM DMA
             0x4014 => {
@@ -104,12 +111,14 @@ impl Bus {
             }
 
             // APU Registers
-            0x4000...0x4013 | 0x4015 | 0x4017 => {
+            0x4000...0x4013 | 0x4015 => {
                 self.apu.write(address, value);
             }
 
-            // TODO: Input
-            0x4016 => {}
+            // Input
+            0x4016 | 0x4017 => {
+                self.input.write(address, value);
+            }
 
             _ => {
                 warn!("unhandled write at ${:04X} with ${:02X} ({})",
